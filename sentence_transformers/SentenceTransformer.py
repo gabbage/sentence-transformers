@@ -83,6 +83,64 @@ class SentenceTransformer(nn.Sequential):
         self.device = torch.device(device)
         self.to(device)
 
+    def encode_torch(self, sentences: List[str], batch_size: int = 8, show_progress_bar: bool = None) -> List[ndarray]:
+        """
+       Computes sentence embeddings
+
+       :param sentences:
+           the sentences to embed
+       :param batch_size:
+           the batch size used for the computation
+       :param show_progress_bar:
+            Output a progress bar when encode sentences
+       :return:
+           a list with ndarrays of the embeddings for each sentence
+       """
+        if show_progress_bar is None:
+            show_progress_bar = (logging.getLogger().getEffectiveLevel()==logging.INFO or logging.getLogger().getEffectiveLevel()==logging.DEBUG)
+
+        all_embeddings = []
+        length_sorted_idx = np.argsort([len(sen) for sen in sentences])
+
+        iterator = range(0, len(sentences), batch_size)
+        if show_progress_bar:
+            iterator = tqdm(iterator, desc="Batches")
+
+        for batch_idx in iterator:
+            batch_tokens = []
+
+            batch_start = batch_idx
+            batch_end = min(batch_start + batch_size, len(sentences))
+
+            longest_seq = 0
+
+            for idx in length_sorted_idx[batch_start: batch_end]:
+                sentence = sentences[idx]
+                tokens = self.tokenize(sentence)
+                longest_seq = max(longest_seq, len(tokens))
+                batch_tokens.append(tokens)
+
+            features = {}
+            for text in batch_tokens:
+                sentence_features = self.get_sentence_features(text, longest_seq)
+
+                for feature_name in sentence_features:
+                    if feature_name not in features:
+                        features[feature_name] = []
+                    features[feature_name].append(sentence_features[feature_name])
+
+            for feature_name in features:
+                features[feature_name] = torch.from_numpy(np.asarray(features[feature_name])).to(self.device)
+
+            with torch.no_grad():
+                embeddings = self.forward(features)
+                all_embeddings.extend(embeddings['sentence_embedding'])
+
+        reverting_order = np.argsort(length_sorted_idx)
+        all_embeddings = [all_embeddings[idx] for idx in reverting_order]
+
+        return torch.stack(all_embeddings, dim=0)
+
     def encode(self, sentences: List[str], batch_size: int = 8, show_progress_bar: bool = None) -> List[ndarray]:
         """
        Computes sentence embeddings
